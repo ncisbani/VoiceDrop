@@ -1,14 +1,13 @@
 import subprocess
-import os
-import tempfile
-import re
+import json
+
+WHISPER_SERVER_URL = "http://127.0.0.1:8178"
+LLAMA_SERVER_URL = "http://127.0.0.1:8179"
 
 class Transcriber:
-    def __init__(self, whisper_cli_path, whisper_model, llama_cli_path=None, llm_model=None):
-        self.whisper_cli_path = whisper_cli_path
-        self.whisper_model = whisper_model
-        self.llama_cli_path = llama_cli_path
-        self.llm_model = llm_model
+    def __init__(self, whisper_server_url=WHISPER_SERVER_URL, llama_server_url=LLAMA_SERVER_URL):
+        self.whisper_server_url = whisper_server_url
+        self.llama_server_url = llama_server_url
 
     def _strip_outer_quotes(self, text):
         """Strip matched outer quotes (double, single, smart) from text."""
@@ -16,8 +15,8 @@ class Transcriber:
             return text
         s = text.strip()
         quote_pairs = [
-            ('\u201c', '\u201d'),  # " "
-            ('\u2018', '\u2019'),  # ' '
+            ('\u201c', '\u201d'),
+            ('\u2018', '\u2019'),
             ('"', '"'),
             ("'", "'"),
         ]
@@ -25,7 +24,6 @@ class Transcriber:
             if s.startswith(open_q) and s.endswith(close_q) and len(s) > 1:
                 s = s[len(open_q):-len(close_q)].strip()
                 break
-        # Also handle trailing period after closing quote: "text". → text
         if s.endswith('.') and len(s) > 1:
             for open_q, close_q in quote_pairs:
                 inner = s[:-1].strip()
@@ -35,60 +33,41 @@ class Transcriber:
         return s
 
     def transcribe(self, wav_path, language="en"):
-        if not os.path.exists(self.whisper_model):
-            raise FileNotFoundError(f"Whisper model not found at {self.whisper_model}")
-        
         cmd = [
-            self.whisper_cli_path,
-            "-m", self.whisper_model,
-            "-f", wav_path,
-            "-nt", # No timestamps
-            "-l", language
+            "curl", "-sS", "-X", "POST",
+            f"{self.whisper_server_url}/inference",
+            "-F", f"file=@{wav_path}",
+            "-F", f"language={language}",
+            "-F", "response_format=json"
         ]
-        
-        print(f"Running Whisper STT command: {' '.join(cmd)}")
-        # Run whisper-cli and capture stdout and stderr
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
-        
+        print(f"Requesting transcription from whisper-server: {wav_path}")
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if result.returncode != 0:
-            print(f"Whisper error: {result.stderr}")
-            raise RuntimeError(f"Whisper failed: {result.stderr}")
-            
-        # Clean up whisper output (remove empty lines, leading/trailing spaces)
-        raw_text = result.stdout.strip()
-        
-        # Whisper sometimes includes brackets or comments like [music] or [whispering], let's keep them but strip newlines
-        lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
-        transcription = " ".join(lines)
+            raise RuntimeError(
+                f"Could not reach whisper-server at {self.whisper_server_url}: {result.stderr.strip()}\n"
+                f"Check it's running: systemctl --user status voicedrop-whisper"
+            )
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"whisper-server returned invalid response: {result.stdout[:200]}")
+        if "error" in data:
+            raise RuntimeError(f"whisper-server error: {data['error']}")
 
-        # Strip outer quotes that whisper sometimes wraps around output
-        transcription = self._strip_outer_quotes(transcription)
-
+        transcription = self._strip_outer_quotes(data.get("text", "").strip())
         print(f"Raw transcription: {transcription}")
         return transcription
 
     def correct_text(self, raw_text, language="en"):
-        if not self.llama_cli_path or not self.llm_model:
-            return raw_text
-            
-        if not os.path.exists(self.llm_model):
-            print(f"LLM model not found at {self.llm_model}, skipping correction.")
-            return raw_text
-            
         if not raw_text.strip():
             return raw_text
 
-        # Map language code to full name for the prompt
         lang_names = {
-            "en": "English",
-            "it": "Italian",
-            "es": "Spanish",
-            "fr": "French",
-            "de": "German"
+            "en": "English", "it": "Italian", "es": "Spanish",
+            "fr": "French", "de": "German"
         }
         lang_name = lang_names.get(language, "the same language as input")
 
-        # Construct ChatML prompt
         prompt = (
             "<|im_start|>system\n"
             "You are a speech transcription cleanup assistant. Your job is to correct grammatical mistakes, "
@@ -103,77 +82,35 @@ class Transcriber:
             "<|im_start|>assistant\n"
         )
 
-        # Write prompt to a temp file to avoid shell escaping issues
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as temp_file:
-            temp_file.write(prompt)
-            temp_file_path = temp_file.name
+        payload = json.dumps({
+            "prompt": prompt,
+            "n_predict": 256,
+            "temperature": 0.1,
+            "stop": ["<|im_end|>"]
+        })
 
         cmd = [
-            self.llama_cli_path,
-            "-m", self.llm_model,
-            "-f", temp_file_path,
-            "-n", "256",            # limit output tokens
-            "--temp", "0.1",        # low temperature for consistency
-            "-ngl", "0",            # cpu execution
-            "-st",                  # single-turn only (prevents interactive hang)
-            "--simple-io"           # basic IO for subprocess redirection compatibility
+            "curl", "-sS", "-X", "POST",
+            f"{self.llama_server_url}/completion",
+            "-H", "Content-Type: application/json",
+            "-d", payload
         ]
-
-        print(f"Running LLM correction command: {' '.join(cmd)}")
-        try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
-        finally:
-            # Clean up the temp file
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-
+        print("Requesting correction from llama-server")
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if result.returncode != 0:
-            print(f"Llama CLI error: {result.stderr}")
-            return raw_text  # Fallback to raw text on error
+            print(f"Could not reach llama-server at {self.llama_server_url}: {result.stderr.strip()}")
+            print("Check it's running: systemctl --user status voicedrop-llama")
+            return raw_text
 
-        output = result.stdout
-        
-        # Parse the output backwards to extract the generated completion.
-        # This isolates the clean response from the ASCII logo, commands list, truncated prompts, and stats.
-        lines = output.splitlines()
-        stats_idx = -1
-        for i, line in enumerate(lines):
-            if "[ Prompt: " in line:
-                stats_idx = i
-                break
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            print(f"llama-server returned invalid response: {result.stdout[:200]}")
+            return raw_text
 
-        corrected = ""
-        if stats_idx != -1:
-            prompt_end_idx = -1
-            # Walk backwards from the stats block to find the end of the prompt display
-            for j in range(stats_idx - 1, -1, -1):
-                line = lines[j]
-                if "(truncated)" in line or "<|im_start|>assistant" in line:
-                    prompt_end_idx = j
-                    break
-            
-            # Fallback: look for the last line starting with the user/system prompt symbol ">"
-            if prompt_end_idx == -1:
-                for j in range(stats_idx - 1, -1, -1):
-                    if lines[j].strip().startswith(">"):
-                        prompt_end_idx = j
-                        break
-
-            if prompt_end_idx != -1:
-                generated_lines = lines[prompt_end_idx + 1:stats_idx]
-                corrected = "\n".join(generated_lines).strip()
-
-        # Last resort fallback: clean the entire output using regex
-        if not corrected:
-            corrected = output.strip()
-            corrected = re.sub(r"\[ Prompt:.*?\]", "", corrected, flags=re.DOTALL)
-            corrected = re.sub(r"Exiting\.\.\.", "", corrected)
-            corrected = re.sub(r"<\|im_(?:start|end)?\|>.*", "", corrected)
-            corrected = corrected.strip()
-        
-        # Clean matched leading and trailing quotes from final output
+        corrected = data.get("content", "").strip()
         final_text = corrected if corrected else raw_text
         final_text = self._strip_outer_quotes(final_text)
-            
+
         print(f"Final polished transcription: {final_text}")
         return final_text

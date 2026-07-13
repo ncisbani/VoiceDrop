@@ -14,10 +14,15 @@ fi
 
 INSTALL_DIR="$HOME/.local/share/voicedrop"
 
-# 1. Kill any running daemon
-echo "Stopping running daemon (if any)..."
+# 1. Kill any running daemon and systemd services
+echo "Stopping running daemon and systemd services (if any)..."
 pkill -f "voicedrop" 2>/dev/null || true
 rm -f /tmp/voicedrop.sock
+systemctl --user disable --now voicedrop-whisper.service voicedrop-llama.service ydotoold.service 2>/dev/null || true
+rm -f "$HOME/.config/systemd/user/voicedrop-whisper.service"
+rm -f "$HOME/.config/systemd/user/voicedrop-llama.service"
+rm -f "$HOME/.config/systemd/user/ydotoold.service"
+systemctl --user daemon-reload
 
 # 2. Remove desktop entry
 echo "Removing desktop entry..."

@@ -29,15 +29,7 @@ class VoiceDropDaemon:
         self.state = "idle" # "idle", "recording", "processing"
         self.temp_wav = None
         
-        whisper_cli = os.path.join(self.base_dir, "whisper.cpp/build/bin/whisper-cli")
-        llama_cli = os.path.join(self.base_dir, "llama.cpp/build/bin/llama-cli")
-        
-        self.transcriber = Transcriber(
-            whisper_cli_path=whisper_cli,
-            whisper_model=self.cfg.get("whisper_model"),
-            llama_cli_path=llama_cli,
-            llm_model=self.cfg.get("llm_model")
-        )
+        self.transcriber = Transcriber()
 
     def get_mic_volume(self):
         """Callback for the overlay visualizer to read mic volume."""
@@ -104,8 +96,6 @@ class VoiceDropDaemon:
         
         # Reload config in case settings changed
         self.cfg = config.load_config()
-        self.transcriber.whisper_model = self.cfg.get("whisper_model")
-        self.transcriber.llm_model = self.cfg.get("llm_model")
         
         # Create temp WAV path
         self.temp_wav = os.path.join(tempfile.gettempdir(), "voicedrop_recording.wav")
