@@ -19,18 +19,18 @@ SOCKET_PATH = "/tmp/voicedrop.sock"
 
 class VoiceDropDaemon:
     def __init__(self):
+        # Dynamically set base directory
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.cfg = config.load_config()
         self.recorder = None
         self.transcriber = None
         self.overlay = None
         self.server_socket = None
-        self.running = False
+        self.state = "idle" # "idle", "recording", "processing"
         self.temp_wav = None
         
-        # Paths
-        base_dir = "/home/ncisbani/Documents/varie/VoiceDrop"
-        whisper_cli = os.path.join(base_dir, "whisper.cpp/build/bin/whisper-cli")
-        llama_cli = os.path.join(base_dir, "llama.cpp/build/bin/llama-cli")
+        whisper_cli = os.path.join(self.base_dir, "whisper.cpp/build/bin/whisper-cli")
+        llama_cli = os.path.join(self.base_dir, "llama.cpp/build/bin/llama-cli")
         
         self.transcriber = Transcriber(
             whisper_cli_path=whisper_cli,
@@ -55,38 +55,16 @@ class VoiceDropDaemon:
 
     def on_silence_detected(self):
         # fires from recorder's background thread, must marshal into GTK main loop
-        GLib.idle_add(self.stop_recording_from_gui)
+        GLib.idle_add(self.stop_recording)
 
     def start(self):
-        self.running = True
-        
-        # 1. Create temp WAV path
-        self.temp_wav = os.path.join(tempfile.gettempdir(), "voicedrop_recording.wav")
-        if os.path.exists(self.temp_wav):
-            try:
-                os.remove(self.temp_wav)
-            except Exception:
-                pass
-
-        # 2. Start audio recorder
-        self.recorder = AudioRecorder(
-            device_index=self.cfg.get("audio_device_index"),
-            silence_callback=self.on_silence_detected
-        )
-        self.recorder.start()
-
-        # 3. Open GTK Overlay window
-        self.overlay = OverlayWindow(
-            stop_callback=self.stop_recording_from_gui,
-            get_volume_callback=self.get_mic_volume
-        )
-        self.overlay.set_state("listening")
-        self.overlay.show_all()
-
-        # 4. Start Unix Socket Server to listen for toggle signals
+        # 1. Start Unix Socket Server
         self.start_socket_server()
         
-        # Run GTK Main Loop
+        # 2. Immediately start recording for the initial toggle spawn
+        self.start_recording()
+        
+        # 3. Run GTK Main Loop
         Gtk.main()
 
     def start_socket_server(self):
@@ -99,19 +77,18 @@ class VoiceDropDaemon:
         
         def socket_thread_func():
             print("Daemon socket server listening...")
-            while self.running:
+            while True:
                 try:
-                    self.server_socket.settimeout(1.0)
                     conn, _ = self.server_socket.accept()
                     data = conn.recv(1024).decode('utf-8')
                     if "toggle" in data:
-                        print("Toggle signal received via socket.")
-                        # Thread-safe stop trigger in GTK main thread
-                        GLib.idle_add(self.stop_recording_from_gui)
+                        print(f"Toggle signal received via socket. Current state: {self.state}")
+                        if self.state == "idle":
+                            GLib.idle_add(self.start_recording)
+                        elif self.state == "recording":
+                            GLib.idle_add(self.stop_recording)
                         conn.sendall(b"OK")
                     conn.close()
-                except socket.timeout:
-                    continue
                 except Exception as e:
                     print(f"Socket server error: {e}")
                     break
@@ -119,19 +96,56 @@ class VoiceDropDaemon:
         t = threading.Thread(target=socket_thread_func, daemon=True)
         t.start()
 
-    def stop_recording_from_gui(self):
-        """Stops the recording, switches UI to processing, and starts transcription."""
-        if not self.running:
-            return False
+    def start_recording(self):
+        if self.state != "idle" and self.recorder is not None:
+            return
             
-        self.running = False
-        self.overlay.set_state("processing")
+        self.state = "recording"
+        
+        # Reload config in case settings changed
+        self.cfg = config.load_config()
+        self.transcriber.whisper_model = self.cfg.get("whisper_model")
+        self.transcriber.llm_model = self.cfg.get("llm_model")
+        
+        # Create temp WAV path
+        self.temp_wav = os.path.join(tempfile.gettempdir(), "voicedrop_recording.wav")
+        if os.path.exists(self.temp_wav):
+            try:
+                os.remove(self.temp_wav)
+            except Exception:
+                pass
+
+        # Start audio recorder
+        self.recorder = AudioRecorder(
+            device_index=self.cfg.get("audio_device_index"),
+            silence_callback=self.on_silence_detected
+        )
+        self.recorder.start()
+
+        # Open GTK Overlay window
+        self.overlay = OverlayWindow(
+            stop_callback=self.stop_recording,
+            get_volume_callback=self.get_mic_volume
+        )
+        self.overlay.set_state("listening")
+        self.overlay.show_all()
+
+    def stop_recording(self):
+        """Stops the recording, switches UI to processing, and starts transcription."""
+        if self.state != "recording":
+            return
+            
+        self.state = "processing"
+        if self.overlay:
+            self.overlay.set_state("processing")
         
         # Stop recording in a background thread so we don't freeze the GTK UI
         def process_audio_thread():
             # 1. Stop audio recorder and save WAV
-            self.recorder.stop(self.temp_wav)
-            self.recorder.cleanup()
+            if self.recorder:
+                self.recorder.stop(self.temp_wav)
+                self.recorder.cleanup()
+                self.recorder = None
             
             text = ""
             try:
@@ -145,7 +159,6 @@ class VoiceDropDaemon:
                     text = raw_text
             except Exception as e:
                 print(f"Transcription failed: {e}")
-                # Fallback: simple notification
                 try:
                     subprocess.run(["notify-send", "VoiceDrop Error", str(e)])
                 except Exception:
@@ -162,8 +175,8 @@ class VoiceDropDaemon:
             if text.strip():
                 import time
                 if self.overlay:
-                    GLib.idle_add(self.overlay.hide)
-                time.sleep(0.2)  # Wait for focus to return to original window
+                    GLib.idle_add(self.overlay.close_window) # destroys the window
+                time.sleep(0.1) # Wait briefly for focus
                 
                 if self.cfg.get("auto_paste", True):
                     paste_text(text)
@@ -181,12 +194,11 @@ class VoiceDropDaemon:
                     except Exception:
                         pass
                 
-            # Close UI in GTK main thread
+            # Close UI in GTK main thread and exit the daemon process
             GLib.idle_add(self.cleanup_and_quit)
             
         t = threading.Thread(target=process_audio_thread, daemon=True)
         t.start()
-        return False
 
     def cleanup_and_quit(self):
         # Stop socket server
@@ -196,13 +208,19 @@ class VoiceDropDaemon:
             except Exception:
                 pass
             if os.path.exists(SOCKET_PATH):
-                os.remove(SOCKET_PATH)
+                try:
+                    os.remove(SOCKET_PATH)
+                except Exception:
+                    pass
                 
-        # Close GTK Window
+        # Close GTK Window and quit main loop so process terminates
         if self.overlay:
-            self.overlay.close_window()
-        else:
-            Gtk.main_quit()
+            try:
+                self.overlay.close_window()
+            except Exception:
+                pass
+        
+        Gtk.main_quit()
 
 def toggle_recording():
     """Tries to connect to running daemon. If found, sends toggle signal. If not, spawns daemon."""

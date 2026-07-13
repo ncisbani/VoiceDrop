@@ -2,18 +2,19 @@ import os
 import sys
 import urllib.request
 
-MODELS_DIR = "/home/ncisbani/Documents/varie/VoiceDrop/models"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 # URL mappings
 MODELS = {
-    "whisper-base": {
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-        "path": os.path.join(MODELS_DIR, "ggml-base.bin")
+    "whisper-tiny": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+        "path": os.path.join(MODELS_DIR, "ggml-tiny.bin")
     },
-    "qwen-0.5b-llm": {
-        "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-        "path": os.path.join(MODELS_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf")
+    "smollm-135m": {
+        "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct-GGUF/resolve/main/smollm2-135m-instruct-q4_k_m.gguf",
+        "path": os.path.join(MODELS_DIR, "smollm2-135m-instruct-q4_k_m.gguf")
     }
 }
 

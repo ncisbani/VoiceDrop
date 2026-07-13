@@ -144,5 +144,11 @@ class Transcriber:
             corrected = re.sub(r"<\|im_(?:start|end)?\|>.*", "", corrected)
             corrected = corrected.strip()
         
-        print(f"Corrected transcription: {corrected}")
-        return corrected if corrected else raw_text
+        # Clean matched leading and trailing quotes from final output
+        final_text = corrected if corrected else raw_text
+        final_text = final_text.strip()
+        if (final_text.startswith('"') and final_text.endswith('"')) or (final_text.startswith("'") and final_text.endswith("'")):
+            final_text = final_text[1:-1].strip()
+            
+        print(f"Final polished transcription: {final_text}")
+        return final_text

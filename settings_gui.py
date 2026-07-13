@@ -22,12 +22,22 @@ class SettingsWindow(Gtk.Window):
         self.is_testing_mic = False
         self.test_timer_id = None
         
+        # Get current shortcut from GNOME
+        _, _, _, self.current_shortcut = self.find_voicedrop_shortcut()
+        if not self.current_shortcut:
+            self.current_shortcut = ""
+        self.pending_shortcut = self.current_shortcut
+        self.capturing_shortcut = False
+        
         # Apply CSS style for modern look
         self.apply_css()
         
         # Main layout container
         main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(main_vbox)
+        
+        # Connect key press to listen for shortcut binding
+        self.connect("key-press-event", self.on_key_press_event)
         
         # Header / Title Bar Area
         header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -94,6 +104,27 @@ class SettingsWindow(Gtk.Window):
         grid1.attach(paste_label, 0, 2, 1, 1)
         grid1.attach_next_to(self.paste_switch, paste_label, Gtk.PositionType.RIGHT, 1, 1)
         
+        # Keyboard Shortcut (GNOME)
+        shortcut_label = Gtk.Label(label="Keyboard Shortcut:")
+        shortcut_label.set_xalign(0.0)
+        
+        shortcut_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        
+        self.shortcut_btn = Gtk.Button()
+        self.shortcut_btn.set_name("test-btn")
+        self.shortcut_btn.connect("clicked", self.start_shortcut_capture)
+        self.shortcut_btn.set_label(self.format_shortcut_for_display(self.current_shortcut))
+        
+        self.clear_shortcut_btn = Gtk.Button(label="Clear")
+        self.clear_shortcut_btn.set_name("cancel-btn")
+        self.clear_shortcut_btn.connect("clicked", self.on_clear_shortcut)
+        
+        shortcut_hbox.pack_start(self.shortcut_btn, True, True, 0)
+        shortcut_hbox.pack_start(self.clear_shortcut_btn, False, False, 0)
+        
+        grid1.attach(shortcut_label, 0, 3, 1, 1)
+        grid1.attach_next_to(shortcut_hbox, shortcut_label, Gtk.PositionType.RIGHT, 1, 1)
+        
         # --- Section 2: Diagnostics & Setup ---
         section2_label = Gtk.Label()
         section2_label.set_markup("<span font_desc='10' weight='bold' color='#F3F4F6'>DIAGNOSTICS &amp; SETUP</span>")
@@ -116,30 +147,17 @@ class SettingsWindow(Gtk.Window):
         mic_box.pack_start(self.mic_level_bar, True, True, 0)
         content_box.pack_start(mic_box, False, False, 0)
         
-        # GNOME Shortcut Guide
-        shortcut_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        shortcut_box.set_name("guide-box")
-        shortcut_box.set_margin_top(4)
+        # GNOME Shortcut Guide Note
+        shortcut_note_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        shortcut_note_box.set_name("guide-box")
+        shortcut_note_box.set_margin_top(4)
         
-        guide_title = Gtk.Label()
-        guide_title.set_markup("<span font_desc='9' weight='bold' color='#F3F4F6'>How to bind a shortcut in GNOME:</span>")
-        guide_title.set_xalign(0.0)
-        
-        guide_text = Gtk.Label()
-        guide_text.set_markup(
-            "<span font_desc='9' color='#9CA3AF'>"
-            "1. Open <b>Settings</b> → <b>Keyboard</b> → <b>Keyboard Shortcuts</b>.\n"
-            "2. Scroll down and click <b>Custom Shortcuts</b> → <b>+</b>.\n"
-            "3. Name it: <span color='#38BDF8'>VoiceDrop</span>\n"
-            "4. Command: <span color='#10B981'>/usr/bin/python3 /home/ncisbani/Documents/varie/VoiceDrop/main.py --toggle</span>\n"
-            "5. Set shortcut to e.g. <span color='#A78BFA'>Super+Space</span> or <span color='#A78BFA'>Alt+S</span>."
-            "</span>"
-        )
-        guide_text.set_xalign(0.0)
-        
-        shortcut_box.pack_start(guide_title, False, False, 0)
-        shortcut_box.pack_start(guide_text, False, False, 0)
-        content_box.pack_start(shortcut_box, False, False, 0)
+        note_title = Gtk.Label()
+        note_title.set_markup("<span font_desc='9' color='#9CA3AF'>The keyboard shortcut is registered directly in your GNOME system settings. Settings are saved instantly when you click Save.</span>")
+        note_title.set_line_wrap(True)
+        note_title.set_xalign(0.0)
+        shortcut_note_box.pack_start(note_title, False, False, 0)
+        content_box.pack_start(shortcut_note_box, False, False, 0)
         
         # --- Bottom Buttons ---
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -290,6 +308,11 @@ class SettingsWindow(Gtk.Window):
         
         config.save_config(self.config_data)
         
+        # Save keyboard shortcut
+        if self.pending_shortcut != self.current_shortcut:
+            self.save_voicedrop_shortcut(self.pending_shortcut)
+            self.current_shortcut = self.pending_shortcut
+            
         # Show quick dialog
         dialog = Gtk.MessageDialog(
             transient_for=self,
@@ -307,3 +330,169 @@ class SettingsWindow(Gtk.Window):
         self.stop_mic_test()
         self.destroy()
         Gtk.main_quit()
+
+    # --- GNOME Keyboard Shortcut Management ---
+    def get_custom_bindings(self):
+        import subprocess
+        import ast
+        try:
+            out = subprocess.check_output(
+                ["gsettings", "get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"],
+                text=True
+            ).strip()
+            if not out or out == "@as []" or out == "[]":
+                return []
+            if out.startswith("@as "):
+                out = out[4:]
+            return ast.literal_eval(out)
+        except Exception:
+            return []
+
+    def set_custom_bindings(self, bindings_list):
+        import subprocess
+        try:
+            if not bindings_list:
+                val = "@as []"
+            else:
+                val = "[" + ", ".join(f"'{p}'" for p in bindings_list) + "]"
+            subprocess.run(
+                ["gsettings", "set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", val],
+                check=True
+            )
+            return True
+        except Exception as e:
+            print(f"Error setting custom bindings array: {e}")
+            return False
+
+    def find_voicedrop_shortcut(self):
+        import subprocess
+        paths = self.get_custom_bindings()
+        for path in paths:
+            try:
+                name = subprocess.check_output(
+                    ["gsettings", "get", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "name"],
+                    text=True
+                ).strip().strip("'\"")
+                cmd = subprocess.check_output(
+                    ["gsettings", "get", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "command"],
+                    text=True
+                ).strip().strip("'\"")
+                binding = subprocess.check_output(
+                    ["gsettings", "get", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "binding"],
+                    text=True
+                ).strip().strip("'\"")
+                
+                if "voicedrop" in name.lower() or "voicedrop" in cmd.lower():
+                    return path, name, cmd, binding
+            except Exception:
+                continue
+        return None, None, None, None
+
+    def save_voicedrop_shortcut(self, binding_str):
+        import subprocess
+        path, name, cmd, old_binding = self.find_voicedrop_shortcut()
+        app_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+        target_cmd = f"/usr/bin/python3 {app_path} --toggle"
+        
+        if not binding_str:
+            if path:
+                paths = self.get_custom_bindings()
+                if path in paths:
+                    paths.remove(path)
+                    self.set_custom_bindings(paths)
+                try:
+                    subprocess.run(["gsettings", "reset-recursively", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}"], stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+            return True
+            
+        if path:
+            try:
+                subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "binding", f"'{binding_str}'"], check=True)
+                subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "command", f"'{target_cmd}'"], check=True)
+                return True
+            except Exception as e:
+                print(f"Error updating keybinding: {e}")
+                return False
+        else:
+            paths = self.get_custom_bindings()
+            idx = 0
+            while True:
+                new_path = f"/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom{idx}/"
+                if new_path not in paths:
+                    break
+                idx += 1
+            
+            paths.append(new_path)
+            if self.set_custom_bindings(paths):
+                try:
+                    subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{new_path}", "name", "'VoiceDrop'"], check=True)
+                    subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{new_path}", "command", f"'{target_cmd}'"], check=True)
+                    subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{new_path}", "binding", f"'{binding_str}'"], check=True)
+                    return True
+                except Exception as e:
+                    print(f"Error setting new keybinding: {e}")
+                    return False
+            return False
+
+    def format_shortcut_for_display(self, shortcut_str):
+        if not shortcut_str:
+            return "None (Click to bind)"
+        res = shortcut_str
+        res = res.replace("<Super>", "Super+")
+        res = res.replace("<Control>", "Ctrl+")
+        res = res.replace("<Alt>", "Alt+")
+        res = res.replace("<Shift>", "Shift+")
+        if res.endswith("+"):
+            res = res[:-1]
+        return res
+
+    def start_shortcut_capture(self, button):
+        self.capturing_shortcut = True
+        self.shortcut_btn.set_label("Press keys... (Esc to cancel)")
+
+    def stop_shortcut_capture(self, shortcut_str):
+        self.capturing_shortcut = False
+        if shortcut_str:
+            self.pending_shortcut = shortcut_str
+        self.shortcut_btn.set_label(self.format_shortcut_for_display(self.pending_shortcut))
+
+    def on_clear_shortcut(self, button):
+        self.capturing_shortcut = False
+        self.pending_shortcut = ""
+        self.shortcut_btn.set_label(self.format_shortcut_for_display(self.pending_shortcut))
+
+    def on_key_press_event(self, widget, event):
+        if not hasattr(self, "capturing_shortcut") or not self.capturing_shortcut:
+            return False
+            
+        keyval = event.keyval
+        key_name = Gdk.keyval_name(keyval)
+        
+        if key_name == "Escape" and not (event.state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.MOD1_MASK | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.SHIFT_MASK)):
+            self.stop_shortcut_capture(None)
+            return True
+            
+        if keyval in [0xffeb, 0xffec, 0xffe3, 0xffe4, 0xffe9, 0xffea, 0xffe1, 0xffe2, 0xffe7, 0xffe8]:
+            return True
+            
+        modifiers = []
+        state = event.state
+        if state & Gdk.ModifierType.SUPER_MASK:
+            modifiers.append("<Super>")
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            modifiers.append("<Control>")
+        if state & Gdk.ModifierType.MOD1_MASK:
+            modifiers.append("<Alt>")
+        if state & Gdk.ModifierType.SHIFT_MASK:
+            modifiers.append("<Shift>")
+            
+        if not key_name:
+            return True
+            
+        if len(key_name) == 1:
+            key_name = key_name.lower()
+            
+        shortcut_str = "".join(modifiers) + key_name
+        self.stop_shortcut_capture(shortcut_str)
+        return True

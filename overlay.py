@@ -105,4 +105,3 @@ class OverlayWindow(Gtk.Window):
     def close_window(self):
         GLib.source_remove(self.animation_timer)
         self.destroy()
-        Gtk.main_quit()

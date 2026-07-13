@@ -1,13 +1,14 @@
 import os
 import json
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.expanduser("~/.config/voicedrop")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 DEFAULT_CONFIG = {
     "language": "en",
-    "whisper_model": "/home/ncisbani/Documents/varie/VoiceDrop/models/ggml-base.bin",
-    "llm_model": "/home/ncisbani/Documents/varie/VoiceDrop/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "whisper_model": os.path.join(BASE_DIR, "models/ggml-tiny.bin"),
+    "llm_model": os.path.join(BASE_DIR, "models/smollm2-135m-instruct-q4_k_m.gguf"),
     "llm_correction": True,
     "auto_paste": True,
     "audio_device_index": None
@@ -27,6 +28,14 @@ def load_config():
                 if k not in config:
                     config[k] = v
                     updated = True
+            
+            # Migration/validation: if model path doesn't exist, is old/heavy, or has wrong base path, reset it
+            for key in ["whisper_model", "llm_model"]:
+                path = config.get(key)
+                if not path or "ggml-base.bin" in path or "qwen2.5-0.5b" in path or not os.path.exists(path):
+                    config[key] = DEFAULT_CONFIG[key]
+                    updated = True
+            
             if updated:
                 save_config(config)
             return config
