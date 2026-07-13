@@ -10,6 +10,30 @@ class Transcriber:
         self.llama_cli_path = llama_cli_path
         self.llm_model = llm_model
 
+    def _strip_outer_quotes(self, text):
+        """Strip matched outer quotes (double, single, smart) from text."""
+        if not text:
+            return text
+        s = text.strip()
+        quote_pairs = [
+            ('\u201c', '\u201d'),  # " "
+            ('\u2018', '\u2019'),  # ' '
+            ('"', '"'),
+            ("'", "'"),
+        ]
+        for open_q, close_q in quote_pairs:
+            if s.startswith(open_q) and s.endswith(close_q) and len(s) > 1:
+                s = s[len(open_q):-len(close_q)].strip()
+                break
+        # Also handle trailing period after closing quote: "text". → text
+        if s.endswith('.') and len(s) > 1:
+            for open_q, close_q in quote_pairs:
+                inner = s[:-1].strip()
+                if inner.startswith(open_q) and inner.endswith(close_q) and len(inner) > 1:
+                    s = inner[len(open_q):-len(close_q)].strip() + "."
+                    break
+        return s
+
     def transcribe(self, wav_path, language="en"):
         if not os.path.exists(self.whisper_model):
             raise FileNotFoundError(f"Whisper model not found at {self.whisper_model}")
@@ -36,7 +60,10 @@ class Transcriber:
         # Whisper sometimes includes brackets or comments like [music] or [whispering], let's keep them but strip newlines
         lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
         transcription = " ".join(lines)
-        
+
+        # Strip outer quotes that whisper sometimes wraps around output
+        transcription = self._strip_outer_quotes(transcription)
+
         print(f"Raw transcription: {transcription}")
         return transcription
 
@@ -146,9 +173,7 @@ class Transcriber:
         
         # Clean matched leading and trailing quotes from final output
         final_text = corrected if corrected else raw_text
-        final_text = final_text.strip()
-        if (final_text.startswith('"') and final_text.endswith('"')) or (final_text.startswith("'") and final_text.endswith("'")):
-            final_text = final_text[1:-1].strip()
+        final_text = self._strip_outer_quotes(final_text)
             
         print(f"Final polished transcription: {final_text}")
         return final_text

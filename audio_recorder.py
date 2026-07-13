@@ -19,6 +19,7 @@ class AudioRecorder:
         self.frames = []
         self.recording = False
         self.thread = None
+        self.stream_error = None
 
         self.silence_callback = silence_callback
         self.silence_threshold = silence_threshold
@@ -37,6 +38,7 @@ class AudioRecorder:
         except Exception as e:
             print(f"Error opening audio stream: {e}")
             self.recording = False
+            self.stream_error = str(e)
             return
 
         voice_detected = False

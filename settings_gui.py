@@ -6,6 +6,79 @@ import os
 import config
 from audio_recorder import AudioRecorder
 
+def get_custom_bindings_headless():
+    import subprocess, ast
+    try:
+        out = subprocess.check_output(
+            ["gsettings", "get", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings"],
+            text=True
+        ).strip()
+        if not out or out == "@as []" or out == "[]":
+            return []
+        if out.startswith("@as "):
+            out = out[4:]
+        return ast.literal_eval(out)
+    except Exception:
+        return []
+
+def find_voicedrop_shortcut_headless():
+    import subprocess
+    paths = get_custom_bindings_headless()
+    for path in paths:
+        try:
+            name = subprocess.check_output(
+                ["gsettings", "get", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "name"],
+                text=True
+            ).strip().strip("'\"")
+            cmd = subprocess.check_output(
+                ["gsettings", "get", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "command"],
+                text=True
+            ).strip().strip("'\"")
+            binding = subprocess.check_output(
+                ["gsettings", "get", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "binding"],
+                text=True
+            ).strip().strip("'\"")
+            if "voicedrop" in name.lower() or "voicedrop" in cmd.lower():
+                return path, name, cmd, binding
+        except Exception:
+            continue
+    return None, None, None, None
+
+def save_voicedrop_shortcut_headless(binding_str, install_dir):
+    import subprocess, os
+    path, name, cmd, old_binding = find_voicedrop_shortcut_headless()
+    app_path = os.path.join(install_dir, "main.py")
+    target_cmd = f"/usr/bin/python3 {app_path} --toggle"
+
+    if not binding_str:
+        if path:
+            paths = get_custom_bindings_headless()
+            if path in paths:
+                paths.remove(path)
+                val = "[" + ", ".join(f"'{p}'" for p in paths) + "]" if paths else "@as []"
+                subprocess.run(["gsettings", "set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", val], check=True)
+        return True
+
+    if path:
+        subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "binding", f"'{binding_str}'"], check=True)
+        subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}", "command", f"'{target_cmd}'"], check=True)
+        return True
+    else:
+        paths = get_custom_bindings_headless()
+        idx = 0
+        while True:
+            new_path = f"/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom{idx}/"
+            if new_path not in paths:
+                break
+            idx += 1
+        paths.append(new_path)
+        val = "[" + ", ".join(f"'{p}'" for p in paths) + "]"
+        subprocess.run(["gsettings", "set", "org.gnome.settings-daemon.plugins.media-keys", "custom-keybindings", val], check=True)
+        subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{new_path}", "name", "'VoiceDrop'"], check=True)
+        subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{new_path}", "command", f"'{target_cmd}'"], check=True)
+        subprocess.run(["gsettings", "set", f"org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{new_path}", "binding", f"'{binding_str}'"], check=True)
+        return True
+
 class SettingsWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="VoiceDrop - Settings")
@@ -276,12 +349,21 @@ class SettingsWindow(Gtk.Window):
             self.test_timer_id = None
         if self.recorder:
             self.recorder.recording = False
+            if self.recorder.thread:
+                self.recorder.thread.join(timeout=1.0)
             self.recorder.cleanup()
             self.recorder = None
         self.mic_level_bar.set_value(0.0)
 
     def update_mic_level(self):
-        if not self.is_testing_mic or not self.recorder or not self.recorder.frames:
+        if not self.is_testing_mic or not self.recorder:
+            return True
+        if self.recorder.stream_error:
+            print(f"Mic test failed: {self.recorder.stream_error}")
+            self.stop_mic_test()
+            self.test_mic_btn.set_label("Test Microphone")
+            return False
+        if not self.recorder.frames:
             return True
             
         try:

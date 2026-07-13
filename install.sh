@@ -7,7 +7,7 @@ echo "=== VoiceDrop Installer ==="
 if [ -f /etc/debian_version ]; then
     echo "Detected Debian/Ubuntu system."
     sudo apt-get update
-    sudo apt-get install -y python3-pyaudio python3-evdev python3-numpy python3-gi git cmake build-essential wl-clipboard libnotify-bin
+    sudo apt-get install -y python3-pyaudio python3-evdev python3-numpy python3-gi gir1.2-gtk-3.0 git cmake build-essential wl-clipboard libnotify-bin
 elif [ -f /etc/fedora-release ]; then
     echo "Detected Fedora system."
     sudo dnf install -y python3-pyaudio python3-evdev python3-numpy python3-gobject git cmake gcc-c++ wl-clipboard libnotify
@@ -93,14 +93,9 @@ python3 -c "
 import sys
 sys.path.append('$INSTALL_DIR')
 import settings_gui
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
-win = settings_gui.SettingsWindow()
-# Bind default if not already bound
-path, _, _, current = win.find_voicedrop_shortcut()
+path, _, _, current = settings_gui.find_voicedrop_shortcut_headless()
 if not current:
-    win.save_voicedrop_shortcut('<Super>space')
+    settings_gui.save_voicedrop_shortcut_headless('<Super>space', '$INSTALL_DIR')
     print('Default shortcut bound to Super+Space.')
 else:
     print(f'VoiceDrop shortcut already bound to: {current}')

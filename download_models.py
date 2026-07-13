@@ -13,7 +13,7 @@ MODELS = {
         "path": os.path.join(MODELS_DIR, "ggml-tiny.bin")
     },
     "smollm-135m": {
-        "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct-GGUF/resolve/main/smollm2-135m-instruct-q4_k_m.gguf",
+        "url": "https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf",
         "path": os.path.join(MODELS_DIR, "smollm2-135m-instruct-q4_k_m.gguf")
     }
 }
