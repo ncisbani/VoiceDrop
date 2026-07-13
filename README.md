@@ -17,47 +17,24 @@ When triggered, it displays a minimal glassmorphic visualizer at the bottom cent
 
 ## Setup & Installation
 
-### 1. Install Keyboard Simulation (Optional, for Auto-Pasting)
-To allow VoiceDrop to automatically paste the text, you need the `evdev` python package.
-Run the following command in your terminal:
-```bash
-sudo dnf install -y python3-evdev
-```
-*Note: You must also grant your user write access to `/dev/uinput`. Run once, then reboot:*
+To install VoiceDrop automatically (clones the app, compiles engines, downloads lightweight models, configures permissions, registers the launcher, and binds a default shortcut):
+
+Run this one-liner in your terminal:
 
 ```bash
-sudo tee /etc/udev/rules.d/99-uinput.rules > /dev/null <<'EOF'
-KERNEL=="uinput", GROUP="input", MODE="0660"
-EOF
-sudo usermod -aG input $USER
-sudo modprobe uinput
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+curl -sSf https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/install.sh | bash
 ```
 
-*Reboot or fully log out/in — group membership requires a new session. Verify with `ls -l /dev/uinput` (should show group `input`) and `groups` (should list `input`).*
-
-### 2. Configure GNOME Keyboard Shortcut
-To trigger VoiceDrop with a keyboard shortcut (e.g., `Super+Space` or `Alt+S`):
-1. Open **Settings** → **Keyboard** → **Keyboard Shortcuts**.
-2. Scroll to the bottom and select **Custom Shortcuts**.
-3. Click the **+** button to add a new shortcut:
-   - **Name**: `VoiceDrop Dictation`
-   - **Command**: `python3 /home/ncisbani/Documents/varie/VoiceDrop/main.py --toggle`
-   - **Shortcut**: Press your preferred key combination (e.g., `Super+Space` or `Alt+S`).
-4. Click **Add**.
+> [!IMPORTANT]
+> **Reboot or Log Out**: You must reboot or log out and back in for the `uinput` user group permissions to take effect. This is required for automatic pasting.
 
 ---
 
 ## How to Use
 
-- **Toggle Dictation**: Press your configured keyboard shortcut. The small glassmorphic visualizer will appear at the bottom-center of the screen, animating to your voice.
-- **Finish & Paste**: Press the shortcut again (or click directly on the visualizer bubble). The visualizer will show "Processing...", transcribe and clean up the speech, and automatically paste it at your text cursor.
-- **Configure Settings**: Open the **VoiceDrop** application from your GNOME Applications Launcher, or run:
-  ```bash
-  python3 /home/ncisbani/Documents/varie/VoiceDrop/main.py
-  ```
-  In settings, you can change the language (English, Italian, Spanish, French, German), toggle AI grammar correction, change Whisper/LLM models, and test your microphone input levels.
+- **Configure Settings & Shortcut**: Open **VoiceDrop** from your GNOME Applications Launcher. In the settings window, you can configure the language, toggle AI grammar correction, test microphone levels, and **bind or clear your keyboard shortcut directly** using the interactive key capture interface.
+- **Toggle Dictation**: Press your configured keyboard shortcut (defaults to `Super+Space`). A small blue glassmorphic visualizer dot appears at the bottom of the screen indicating it is listening.
+- **Finish & Paste**: Press the shortcut again (or click the visualizer dot). The visualizer shows a spinner, transcribes and cleans the text (removing outer quotes, filler words, and corrections), pastes it directly at your text cursor, and terminates to use 0% background RAM.
 
 ---
 
