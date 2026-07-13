@@ -1,0 +1,58 @@
+import os
+import sys
+import urllib.request
+
+MODELS_DIR = "/home/ncisbani/Documents/varie/VoiceDrop/models"
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+# URL mappings
+MODELS = {
+    "whisper-base": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+        "path": os.path.join(MODELS_DIR, "ggml-base.bin")
+    },
+    "qwen-0.5b-llm": {
+        "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "path": os.path.join(MODELS_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf")
+    }
+}
+
+def report_progress(block_num, block_size, total_size):
+    read_so_far = block_num * block_size
+    if total_size > 0:
+        percent = read_so_far * 1e2 / total_size
+        s = f"\rDownloading... {percent:5.1f}% [{read_so_far / 1024 / 1024:.1f} MB / {total_size / 1024 / 1024:.1f} MB]"
+        sys.stdout.write(s)
+        sys.stdout.flush()
+    else:
+        sys.stdout.write(f"\rDownloading... {read_so_far / 1024 / 1024:.1f} MB")
+        sys.stdout.flush()
+
+def download_model(name):
+    info = MODELS[name]
+    url = info["url"]
+    path = info["path"]
+    
+    if os.path.exists(path):
+        print(f"{name} model already exists at {path}.")
+        return
+        
+    print(f"Downloading {name} model from {url}...")
+    try:
+        urllib.request.urlretrieve(url, path, report_progress)
+        print(f"\nSuccessfully downloaded {name} to {path}!")
+    except Exception as e:
+        print(f"\nError downloading {name}: {e}")
+        if os.path.exists(path):
+            os.remove(path)
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        model_to_download = sys.argv[1]
+        if model_to_download in MODELS:
+            download_model(model_to_download)
+        else:
+            print(f"Unknown model: {model_to_download}")
+    else:
+        for model_name in MODELS:
+            download_model(model_name)
