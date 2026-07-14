@@ -2,7 +2,20 @@ import os
 import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_DIR = os.path.expanduser("~/.config/voicedrop")
+
+def get_config_dir():
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return os.path.join(appdata, "VoiceDrop")
+        return os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "VoiceDrop")
+
+    if os.uname().sysname == "Darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "VoiceDrop")
+
+    return os.path.expanduser("~/.config/voicedrop")
+
+CONFIG_DIR = get_config_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 DEFAULT_CONFIG = {

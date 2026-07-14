@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 set -e
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "$SCRIPT_DIR/installers/linux/install.sh"
+bash "$SCRIPT_DIR/installers/macos/uninstall.sh"

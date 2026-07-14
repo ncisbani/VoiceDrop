@@ -4,16 +4,26 @@ import socket
 import subprocess
 import threading
 import tempfile
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib
+import time
+
+GTK_AVAILABLE = False
+if sys.platform.startswith("linux"):
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk, GLib
+        GTK_AVAILABLE = True
+    except Exception:
+        GTK_AVAILABLE = False
 
 import config
 from audio_recorder import AudioRecorder
 from transcriber import Transcriber
-from paster import paste_text
-from overlay import OverlayWindow
-from settings_gui import SettingsWindow
+from paster import paste_text, copy_to_clipboard
+
+if GTK_AVAILABLE:
+    from overlay import OverlayWindow
+    from settings_gui import SettingsWindow
 
 SOCKET_PATH = "/tmp/voicedrop.sock"
 
@@ -47,9 +57,12 @@ class VoiceDropDaemon:
 
     def on_silence_detected(self):
         # fires from recorder's background thread, must marshal into GTK main loop
-        GLib.idle_add(self.stop_recording)
+        if GTK_AVAILABLE:
+            GLib.idle_add(self.stop_recording)
 
     def start(self):
+        if not GTK_AVAILABLE:
+            raise RuntimeError("GTK is required for daemon mode on Linux.")
         # 1. Start Unix Socket Server
         self.start_socket_server()
         
@@ -171,7 +184,6 @@ class VoiceDropDaemon:
                 if self.cfg.get("auto_paste", True):
                     paste_text(text)
                 else:
-                    from paster import copy_to_clipboard
                     copy_to_clipboard(text)
                     try:
                         subprocess.run([
@@ -212,8 +224,62 @@ class VoiceDropDaemon:
         
         Gtk.main_quit()
 
+
+def run_headless_cycle():
+    """Cross-platform fallback flow for environments without GTK/Wayland integration."""
+    cfg = config.load_config()
+    transcriber = Transcriber()
+    temp_wav = os.path.join(tempfile.gettempdir(), "voicedrop_recording.wav")
+    silence_event = threading.Event()
+
+    def silence_callback():
+        silence_event.set()
+
+    recorder = AudioRecorder(
+        device_index=cfg.get("audio_device_index"),
+        silence_callback=silence_callback
+    )
+
+    print("VoiceDrop headless mode: listening...")
+    recorder.start()
+
+    max_seconds = 30.0
+    start_ts = time.time()
+    while time.time() - start_ts < max_seconds:
+        if silence_event.wait(timeout=0.1):
+            break
+
+    recorder.stop(temp_wav)
+    recorder.cleanup()
+
+    text = ""
+    try:
+        raw_text = transcriber.transcribe(temp_wav, language=cfg.get("language", "en"))
+        if cfg.get("llm_correction", True):
+            text = transcriber.correct_text(raw_text, language=cfg.get("language", "en"))
+        else:
+            text = raw_text
+    finally:
+        if os.path.exists(temp_wav):
+            try:
+                os.remove(temp_wav)
+            except Exception:
+                pass
+
+    if text.strip():
+        if cfg.get("auto_paste", True):
+            paste_text(text)
+        else:
+            copy_to_clipboard(text)
+    else:
+        print("No text detected.")
+
 def toggle_recording():
     """Tries to connect to running daemon. If found, sends toggle signal. If not, spawns daemon."""
+    if not GTK_AVAILABLE:
+        run_headless_cycle()
+        return
+
     try:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(2.0) # Prevent hanging forever if daemon is deadlocked
@@ -236,9 +302,13 @@ def main():
     if "--toggle" in sys.argv:
         toggle_recording()
     else:
-        # Open Settings window
-        app = SettingsWindow()
-        Gtk.main()
+        if GTK_AVAILABLE:
+            # Open Settings window on Linux/GTK environments
+            app = SettingsWindow()
+            Gtk.main()
+        else:
+            print("Settings GUI is Linux/GTK-only. Running one-shot headless dictation instead.")
+            run_headless_cycle()
 
 if __name__ == "__main__":
     main()

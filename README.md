@@ -1,49 +1,110 @@
 # VoiceDrop
 
-VoiceDrop is an ultra-lightweight, 100% offline, local voice dictation application designed for Linux (Wayland/GNOME). It captures your voice, transcribes it locally using `whisper.cpp`, cleans up filler words and self-corrections using `llama.cpp` with a tiny 0.5B LLM, and pastes the result directly at your active text cursor.
+VoiceDrop is a lightweight, fully local, offline speech-to-text dictation tool.
 
-When triggered, it displays a minimal glassmorphic visualizer at the bottom center of your screen, letting you know it's listening. Click it or press your shortcut again to stop, process, and paste.
+It records your voice, transcribes it with `whisper.cpp`, then optionally cleans filler words and self-corrections with `llama.cpp`.
 
----
+The core dictation flow now works on Linux, macOS, and Windows.
 
-## Architecture & Design
+- Linux: full GTK settings overlay + socket toggle daemon.
+- macOS/Windows: headless dictation mode (no GTK UI) using the same local models.
 
-1. **Light & Fast C++ Engines**: Runs `whisper.cpp` (speech-to-text) and `llama.cpp` (grammar/self-correction LLM) compiled natively. They start instantly and consume very little RAM compared to Python PyTorch/Transformers.
-2. **Native GNOME Integration**: Built using PyGObject (GTK 3) and styled with CSS. The transparent, borderless overlay window runs natively on Wayland.
-3. **Uinput Auto-Paste**: Bypasses Wayland security barriers using Linux `evdev` to create a virtual input device, typing `Ctrl+V` automatically wherever your cursor is.
-4. **Client-Daemon Pattern**: A single UNIX Domain Socket `/tmp/voicedrop.sock` manages recording toggle. Calling `main.py --toggle` starts recording if idle, or stops & transcribes if recording.
+All AI runs locally. No cloud APIs are required.
 
 ---
 
-## Setup & Installation
+## What Makes Sense (And What Changed)
 
-To install VoiceDrop automatically (clones the app, compiles engines, downloads lightweight models, configures permissions, registers the launcher, and binds a default shortcut):
+- Local-only AI: yes, already aligned with your goal.
+- Fast and lightweight: yes, using native C++ engines and small models.
+- Easy removal: now improved with per-OS uninstall scripts.
+- Cross-platform: now organized with dedicated installers for Linux/macOS/Windows.
 
-Run this one-liner in your terminal:
+Important reality check:
+
+- The GTK settings/overlay is Linux-specific.
+- On macOS/Windows, VoiceDrop runs in headless mode when you call `--toggle`.
+
+---
+
+## Architecture
+
+1. `whisper-server` on `127.0.0.1:8178` for speech-to-text.
+2. `llama-server` on `127.0.0.1:8179` for cleanup/correction.
+3. Runtime auto-starts local servers if they are not already running.
+4. Linux keeps daemon + overlay behavior; other OSes use headless one-shot dictation.
+
+---
+
+## Installation (Simple Links)
+
+Preferred path from the repo root:
+
+```bash
+python setup.py
+```
+
+That wizard detects your OS and runs the right installer for you. You can also pass `--prebuilt-dir /path/to/binaries` if you already have prebuilt `whisper-server` and `llama-server` binaries.
+
+Linux:
 
 ```bash
 curl -sSf https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/install.sh | bash
 ```
 
-> [!IMPORTANT]
-> **Reboot or Log Out**: You must reboot or log out and back in for the `uinput` user group permissions to take effect. This is required for automatic pasting.
+macOS:
+
+```bash
+curl -sSf https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/install-macos.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+iwr https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/install-windows.ps1 -UseBasicParsing | iex
+```
+
+Uninstall links:
+
+- Linux: `https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/uninstall.sh`
+- macOS: `https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/uninstall-macos.sh`
+- Windows: `https://raw.githubusercontent.com/ncisbani/VoiceDrop/main/uninstall-windows.ps1`
 
 ---
 
-## How to Use
+## Usage
 
-- **Configure Settings & Shortcut**: Open **VoiceDrop** from your GNOME Applications Launcher. In the settings window, you can configure the language, toggle AI grammar correction, test microphone levels, and **bind or clear your keyboard shortcut directly** using the interactive key capture interface.
-- **Toggle Dictation**: Press your configured keyboard shortcut (defaults to `Super+Space`). A small blue glassmorphic visualizer dot appears at the bottom of the screen indicating it is listening.
-- **Finish & Paste**: Press the shortcut again (or click the visualizer dot). The visualizer shows a spinner, transcribes and cleans the text (removing outer quotes, filler words, and corrections), pastes it directly at your text cursor, and terminates to use 0% background RAM.
+Linux:
+
+- Open settings UI: `python3 main.py`
+- Toggle dictation: `python3 main.py --toggle`
+
+macOS / Windows:
+
+- Toggle dictation (headless): `python main.py --toggle`
+
+Windows local test flow:
+
+1. Run `python setup.py` and choose install.
+2. Allow microphone and clipboard permissions if Windows prompts you.
+3. Run `python main.py --toggle` and speak for a few seconds.
+4. Toggle again or wait for silence detection to finish the cycle.
 
 ---
 
-## File Structure
+## Project Layout
 
-- [main.py](file:///home/ncisbani/Documents/varie/VoiceDrop/main.py): Application entry point, UNIX socket server/client router.
-- [config.py](file:///home/ncisbani/Documents/varie/VoiceDrop/config.py): Persistent configuration reader/writer.
-- [audio_recorder.py](file:///home/ncisbani/Documents/varie/VoiceDrop/audio_recorder.py): PyAudio recorder loop.
-- [transcriber.py](file:///home/ncisbani/Documents/varie/VoiceDrop/transcriber.py): Executor wrapper for `whisper.cpp` and `llama.cpp`.
-- [paster.py](file:///home/ncisbani/Documents/varie/VoiceDrop/paster.py): Clipboard copy and `evdev` key injection.
-- [overlay.py](file:///home/ncisbani/Documents/varie/VoiceDrop/overlay.py): Borderless glassmorphic drawing overlay.
-- [settings_gui.py](file:///home/ncisbani/Documents/varie/VoiceDrop/settings_gui.py): GTK Settings GUI.
+- `installers/linux/*`: Linux install/uninstall.
+- `installers/macos/*`: macOS install/uninstall.
+- `installers/windows/*`: Windows install/uninstall.
+- `install.sh`, `install-macos.sh`, `install-windows.ps1`: simple top-level launcher scripts.
+- `uninstall.sh`, `uninstall-macos.sh`, `uninstall-windows.ps1`: simple top-level uninstall launchers.
+
+---
+
+## Notes
+
+- Auto-paste may require accessibility/input permissions depending on OS.
+- If no auto-paste backend is available, VoiceDrop still copies to clipboard.
+- Model files are stored locally in `models/` and can be removed by uninstall scripts.
+
